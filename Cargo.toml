@@ -1,0 +1,15 @@
+[package]
+name = "looma"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+description = "An experimental desktop image workspace for shaping ideas with AI-generated visuals"
+license = "MIT"
+publish = false
+
+[dependencies]
+dioxus = { version = "0.7", features = ["desktop"] }
+tokio = { version = "1", features = ["process", "time"] }
+tempfile = "3"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+rfd = { version = "0.17", default-features = false }

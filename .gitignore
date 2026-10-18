@@ -1,0 +1,28 @@
+# Build artifacts and generated user content
+/target/
+/generated-images/
+
+# Local credentials, environment, and databases
+.env
+.env.*
+!.env.example
+/.codex/
+/.aws/
+*.pem
+*.key
+*.p12
+*.pfx
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+
+# Local OS/editor files
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# Local publication evidence (not part of the public project)
+/publication-review/

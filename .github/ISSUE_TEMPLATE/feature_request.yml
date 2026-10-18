@@ -1,0 +1,17 @@
+name: Feature request
+description: Describe the user problem and a small useful outcome.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: Describe the user need before proposing an implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Proposed outcome and alternatives
+      description: What should become possible? Is there a current workaround?
+    validations:
+      required: true
