@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.0",
+  "request": "",
+  "assumptions": [],
+  "scene": {
+    "title": "",
+    "width": 0,
+    "height": 0,
+    "visual_rules": {
+      "style": "",
+      "background_color": "",
+      "primary_color": "",
+      "text_color": "",
+      "font": "",
+      "corner_radius": 0,
+      "image_style": ""
+    }
+  },
+  "blocks": [
+    {
+      "id": "",
+      "name": "",
+      "description": "",
+      "frame": { "x": 0, "y": 0, "width": 0, "height": 0 },
+      "layer": 0,
+      "transparent_background": false,
+      "text": [],
+      "reference_blocks": []
+    }
+  ]
+}

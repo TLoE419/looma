@@ -1,0 +1,41 @@
+{
+  "schema_version": "1.0",
+  "request": "公園裡的貓",
+  "assumptions": ["採用橫向畫面與午後自然光。"],
+  "scene": {
+    "title": "公園裡的貓",
+    "width": 1000,
+    "height": 800,
+    "visual_rules": {
+      "style": "自然、溫暖的寫實攝影",
+      "background_color": "",
+      "primary_color": "",
+      "text_color": "",
+      "font": "",
+      "corner_radius": 0,
+      "image_style": "午後自然光、平視視角"
+    }
+  },
+  "blocks": [
+    {
+      "id": "park",
+      "name": "公園背景",
+      "description": "完整草地與樹木，中央留出貓的位置，不含貓與文字。",
+      "frame": { "x": 0, "y": 0, "width": 1000, "height": 800 },
+      "layer": 0,
+      "transparent_background": false,
+      "text": [],
+      "reference_blocks": []
+    },
+    {
+      "id": "cat",
+      "name": "貓咪",
+      "description": "完整坐姿貓咪，光線與公園一致，不含背景或文字。",
+      "frame": { "x": 350, "y": 250, "width": 300, "height": 500 },
+      "layer": 1,
+      "transparent_background": true,
+      "text": [],
+      "reference_blocks": ["park"]
+    }
+  ]
+}
