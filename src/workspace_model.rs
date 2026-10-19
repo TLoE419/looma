@@ -1,6 +1,8 @@
 //! Workspace image state, geometry, view transformations, and image block sizing.
 //! Block rectangles use workspace units; view translation uses workspace-local CSS pixels.
 
+use crate::{assembly::Assembly, generation::Batch};
+
 /// A two-dimensional position or displacement; callers define its coordinate space and units.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Point {
@@ -112,7 +114,9 @@ pub struct Block {
 /// Own block order, selection, and IDs so callers cannot update them independently.
 pub(crate) struct DeskState {
     blocks: Vec<Block>,
+    assemblies: Vec<Assembly>,
     selected: Option<u64>,
+    selected_piece: Option<(u64, usize)>,
     next_id: u64,
 }
 
@@ -120,7 +124,9 @@ impl DeskState {
     pub(crate) fn new() -> Self {
         Self {
             blocks: Vec::new(),
+            assemblies: Vec::new(),
             selected: None,
+            selected_piece: None,
             next_id: 1,
         }
     }
@@ -130,8 +136,66 @@ impl DeskState {
         &self.blocks
     }
 
+    pub(crate) fn assemblies(&self) -> &[Assembly] {
+        &self.assemblies
+    }
+
+    /// Include composition bounds in fitting without changing individual asset rectangles.
+    pub(crate) fn rectangles(&self) -> Vec<Rect> {
+        self.blocks
+            .iter()
+            .map(|block| block.rect)
+            .chain(self.assemblies.iter().map(|assembly| assembly.rect))
+            .collect()
+    }
+
+    /// Commit the group and duplicate guard only after every source has decoded successfully.
+    pub(crate) fn assemble(&mut self, batch: &mut Batch) -> Result<Rect, String> {
+        let mut assembly = Assembly::prepare(batch, self.next_id)?;
+        assembly.rect.x = self
+            .rectangles()
+            .iter()
+            .map(|rect| rect.x + rect.width + 40.0)
+            .fold(0.0, f64::max);
+        let rect = assembly.rect;
+        self.assemblies.push(assembly);
+        self.next_id += 1;
+        batch.assembled = true;
+        Ok(rect)
+    }
+
     pub(crate) fn selected(&self) -> Option<u64> {
         self.selected
+    }
+
+    pub(crate) fn selected_piece(&self) -> Option<(u64, usize)> {
+        self.selected_piece
+    }
+
+    /// Selection never changes scene paint order, so choosing an obscured background is safe.
+    pub(crate) fn select_piece(&mut self, assembly_id: u64, index: usize) {
+        if self
+            .assemblies
+            .iter()
+            .any(|assembly| assembly.id == assembly_id && assembly.pieces.get(index).is_some())
+        {
+            self.selected = None;
+            self.selected_piece = Some((assembly_id, index));
+        }
+    }
+
+    /// Positions use scene units, independent of group origin and camera pan.
+    /// Overflow remains stored even though the scene clips it during display.
+    pub(crate) fn move_piece(&mut self, assembly_id: u64, index: usize, position: Point) {
+        if let Some(piece) = self
+            .assemblies
+            .iter_mut()
+            .find(|assembly| assembly.id == assembly_id)
+            .and_then(|assembly| assembly.pieces.get_mut(index))
+        {
+            piece.rect.x = position.x;
+            piece.rect.y = position.y;
+        }
     }
 
     /// Load, append, and select an image, consuming an ID only after loading succeeds.
@@ -154,6 +218,7 @@ impl DeskState {
         let block = load_block(id, path, title, center)?;
         self.blocks.push(block);
         self.selected = Some(id);
+        self.selected_piece = None;
         self.next_id = id + 1;
         Ok(())
     }
@@ -161,6 +226,7 @@ impl DeskState {
     /// Select the requested ID and bring an existing block to the front without moving it.
     pub(crate) fn select_block(&mut self, id: u64) {
         self.selected = Some(id);
+        self.selected_piece = None;
         if let Some(index) = self.blocks.iter().position(|block| block.id == id) {
             let block = self.blocks.remove(index);
             self.blocks.push(block); // Later siblings paint on top.
@@ -169,6 +235,7 @@ impl DeskState {
 
     pub(crate) fn clear_selection(&mut self) {
         self.selected = None;
+        self.selected_piece = None;
     }
 
     /// Position is the block's top-left corner in workspace units; size and selection stay unchanged.

@@ -2,6 +2,8 @@
 
 use dioxus::prelude::*;
 
+// Position separate generated assets without flattening or modifying their pixels.
+mod assembly;
 mod codex;
 
 // Own per-plan generation progress and inspected outputs without changing the planning schema.

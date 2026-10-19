@@ -103,3 +103,35 @@ Only run deliberately with non-sensitive prompts. Do not automate these in CI.
 - Not run: native minimum-window-size and pointer-wheel checks, or forced
   desktop service-failure/retry. Failure and retry transitions were tested locally.
 - Automatic assembly and persistence across restarts are outside this change.
+
+## Assembly slice: local verification and pending desktop checks
+
+- Automated: stable layer order, conservative alpha bounds (including alpha=1),
+  proportional centering, unchanged source bytes, all-or-nothing insertion after
+  a missing file, repeat insertion rejection, panel-independent snapshots, and
+  inclusion in viewport fitting. These use local PNG fixtures without generation.
+- Desktop acceptance is pending for this slice. Generate a complete plan, press
+  **拼裝到工作桌**, and check one group title bar, separate transparent component
+  surfaces, expected ordering and gaps, and no stretched content. Verify the
+  assembly button cannot add a second copy.
+- Close the plan and verify the group and warnings remain; **顯示全部** should fit
+  ordinary cards and groups together. At narrow window sizes close the panel to
+  inspect the scene unobstructed. Groups cannot be dragged yet.
+- Missing/corrupt files must leave the desk unchanged and report an error. No
+  image request should occur during assembly. Groups are session-only.
+
+## Component selection and movement slice
+
+- Automated: selecting a component leaves paint order unchanged, invalid IDs do
+  nothing, dragging at 50% and 200% uses the initial zoom, sibling images and group
+  bounds remain unchanged, and imported-image selection/blank selection clears
+  component selection. Tests use local assets and make no image requests.
+- Desktop acceptance is pending for this slice. After assembly, click a visible
+  component and check its blue selection ring; drag at different zoom levels and
+  confirm only that component moves while the view remains fixed. Release outside
+  the scene and check dragging stops normally (workspace pointer capture).
+- Select a covered component through the title-bar dropdown; Tab to a component
+  and use arrow keys to move it one scene unit at a time. Dropdown arrow keys must
+  only navigate options. Clicking blank workspace clears the ring. Re-select an
+  ordinary image and confirm the scene selection clears. Source plan/file content
+  and layer order must remain unchanged; scene overflow is clipped during display.

@@ -115,6 +115,9 @@ pub struct Batch {
     states: Vec<BlockState>,
     pub running: bool,
     pub stop_requested: bool,
+
+    // Session-only insertion guard; this is not part of the AI planning schema.
+    pub assembled: bool,
 }
 
 impl Batch {
@@ -126,7 +129,16 @@ impl Batch {
             states,
             running: false,
             stop_requested: false,
+            assembled: false,
         }
+    }
+
+    /// Assembly requires a complete, idle batch and is offered once per session plan.
+    pub fn can_assemble(&self) -> bool {
+        !self.running
+            && !self.assembled
+            && !self.states.is_empty()
+            && self.produced() == self.states.len()
     }
 
     pub fn states(&self) -> &[BlockState] {

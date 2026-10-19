@@ -107,3 +107,25 @@ textarea:focus { outline: none; }
     /* Narrow, short windows also need space for the stacked zoom controls. */
     .plan-panel { bottom: 272px; }
 }
+
+/* A scene owns its clipping area; child images keep alpha and receive no card decoration. */
+.assembled-block {
+  position: absolute;
+  border: 1px solid #dce3f1;
+  border-radius: 14px;
+  box-shadow: 0 8px 26px #28365412;
+  overflow: hidden;
+  box-sizing: content-box;
+}
+.assembled-block > .block-titlebar { background: #fff; }
+.assembly-warning { font-size: 11px; color: #7a6444; white-space: nowrap; }
+.assembled-scene { position: relative; height: calc(100% - 44px); overflow: hidden; }
+.assembled-piece { position: absolute; overflow: hidden; cursor: move; touch-action: none; }
+.assembled-piece img { position: absolute; max-width: none; display: block; pointer-events: none; user-select: none; }
+
+/* The inset ring stays visible at scene edges without altering the image's clipping or size. */
+.assembled-piece.selected::after, .assembled-piece:focus-visible::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  box-shadow: inset 0 0 0 2px #4389f5;
+}
+.layer-picker { min-width: 0; max-width: 44%; margin-left: auto; font: inherit; font-size: 11px; }

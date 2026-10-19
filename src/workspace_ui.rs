@@ -2,6 +2,7 @@
 //! Block positions and selection are session-only and are not restored after closing.
 
 use crate::{
+    assembly::Assembly,
     codex,
     generation::{Batch, BlockState},
     workspace_model::{Block, DeskState, Point, View, dragged},
@@ -15,6 +16,14 @@ enum Drag {
         // Pan the workspace without changing block coordinates.
         start: Point, // Pointer at drag start, relative to the page viewport, in CSS pixels.
         origin: Point, // View translation at drag start, in CSS pixels.
+    },
+    // Keep the scene-local image origin fixed while pointer deltas use viewport pixels.
+    Piece {
+        assembly_id: u64,
+        index: usize,
+        start: Point,
+        origin: Point,
+        zoom: f64,
     },
     Block {
         // Move one image block within the workspace.
@@ -130,14 +139,36 @@ pub fn app() -> Element {
 
     // Fit all blocks with margins by changing the view, not the block coordinates.
     let fit_all = Callback::new(move |_| {
-        let rectangles = desk
-            .read()
-            .blocks()
-            .iter()
-            .map(|block| block.rect)
-            .collect::<Vec<_>>();
+        let rectangles = desk.read().rectangles();
         let [width, height] = viewport();
         view.write().fit(&rectangles, width, height);
+    });
+
+    // Keep the source plan available for warnings; fit beside its panel on wide windows.
+    // Preparation is local file work and never triggers generation or alters source pixels.
+    let assemble_plan = Callback::new(move |_| {
+        if waiting() {
+            return;
+        }
+        let result = split_plan
+            .write()
+            .as_mut()
+            .map(|batch| desk.write().assemble(batch));
+        if let Some(result) = result {
+            match result {
+                Ok(rect) => {
+                    let [width, height] = viewport();
+                    let available = if width >= 740.0 {
+                        (width - 610.0).max(120.0)
+                    } else {
+                        width
+                    };
+                    view.write().fit(&[rect], available, height);
+                    status.set("已拼裝到工作桌；關閉計畫可查看完整畫面。比例差異可能造成空隙，圖片文字仍需核對。".into());
+                }
+                Err(error) => status.set(error),
+            }
+        }
     });
 
     // Select an existing block and bring it to the front without changing its position.
@@ -164,6 +195,8 @@ pub fn app() -> Element {
         });
     });
     let snapshot = desk.read().blocks().to_vec(); // Own render metadata without holding a read borrow on the live block list.
+    let assemblies = desk.read().assemblies().to_vec();
+    let selected_piece = desk.read().selected_piece();
     let selected = desk.read().selected();
     let camera = view();
     let percent = format!("{:.0}%", camera.zoom * 100.0);
@@ -238,6 +271,9 @@ pub fn app() -> Element {
                             let position = dragged(origin, start, current, zoom);		// Convert pointer deltas from CSS pixels to workspace units using the starting zoom.
                             desk.write().move_block(id, position);
                         }
+                        Some(Drag::Piece { assembly_id, index, start, origin, zoom }) => {
+                            desk.write().move_piece(assembly_id, index, dragged(origin, start, current, zoom));
+                        }
                         None => {}
                     }
                 },
@@ -245,6 +281,23 @@ pub fn app() -> Element {
                 onpointercancel: move |_| drag.set(None),
                 onlostpointercapture: move |_| drag.set(None),		// Also end the drag when capture is lost to avoid a stuck interaction.
                 div { class: "world", style: "transform: translate({camera.pan.x}px, {camera.pan.y}px) scale({camera.zoom});",
+                    // Groups have one outer title bar; children retain transparent image surfaces.
+                    for assembly in assemblies {
+                        AssemblyBlock {
+                            key: "assembly-{assembly.id}", assembly, selected: selected_piece,
+                            onpick: move |(id, index)| desk.write().select_piece(id, index),
+                            onmove: move |(id, index, position)| desk.write().move_piece(id, index, position),
+                            ondrag: move |(assembly_id, index, start): (u64, usize, Point)| {
+                                let origin = desk.read().assemblies().iter().find(|group| group.id == assembly_id)
+                                    .and_then(|group| group.pieces.get(index))
+                                    .map(|piece| Point { x: piece.rect.x, y: piece.rect.y });
+                                if let Some(origin) = origin {
+                                    desk.write().select_piece(assembly_id, index);
+                                    drag.set(Some(Drag::Piece { assembly_id, index, start, origin, zoom: view().zoom }));
+                                }
+                            }
+                        }
+                    }
                     for block in snapshot {
                         ImageBlock {
                             key: "{block.id}", selected: selected == Some(block.id), block,
@@ -263,7 +316,7 @@ pub fn app() -> Element {
                 }
 
                 // A visible plan is useful content even when no images have been imported.
-                if desk.read().blocks().is_empty() && split_plan.read().is_none() {
+                if desk.read().rectangles().is_empty() && split_plan.read().is_none() {
                     div { class: "empty-state",
                         span { class: "empty-symbol", "✧" }
                         h1 { "把想法，放到桌上。" }
@@ -281,6 +334,7 @@ pub fn app() -> Element {
                     ongenerate: move |_| generate_plan.call(None),
                     onretry: move |index| generate_plan.call(Some(index)),
                     onstop: move |_| stop_generation.call(()),
+                    onassemble: move |_| assemble_plan.call(()),
                     onclose: move |_| { if !waiting() { split_plan.set(None); } }
                 }
             }
@@ -291,7 +345,7 @@ pub fn app() -> Element {
                     textarea { aria_label: "圖片描述或討論內容", placeholder: "描述你的想法，讓 Looma 一起織成畫面…", value: "{input}", rows: "2",
                         oninput: move |event| input.set(event.value()) }
                     div { class: "composer-actions",
-                        span { class: "block-count", "{desk.read().blocks().len()} 張圖片" }
+                        span { class: "block-count", "{desk.read().blocks().len()} 張圖片 · {desk.read().assemblies().len()} 組拼裝" }
 
                         // Submit text only; selected images are not attached, and replies are not stored as history.
                         button { r#type: "button", class: "text-button", disabled: waiting() || input().trim().is_empty(), onclick: move |_| {
@@ -328,7 +382,7 @@ pub fn app() -> Element {
                         view.write().zoom_at(1.2, Point { x: width / 2.0, y: height / 2.0 });
                     }, "+" }
                     span { class: "control-divider" }
-                    button { class: "fit-button", disabled: desk.read().blocks().is_empty(), onclick: move |_| fit_all.call(()), "顯示全部" }
+                    button { class: "fit-button", disabled: desk.read().rectangles().is_empty(), onclick: move |_| fit_all.call(()), "顯示全部" }
                 }
             }
         }
@@ -345,6 +399,7 @@ fn PlanPanel(
     ongenerate: EventHandler<()>,
     onretry: EventHandler<usize>,
     onstop: EventHandler<()>,
+    onassemble: EventHandler<()>,
 ) -> Element {
     let plan = &batch.plan;
     let json = serde_json::to_string_pretty(plan).expect("validated plans serialize to JSON");
@@ -359,6 +414,10 @@ fn PlanPanel(
                 button { class: "primary-button", r#type: "button", disabled: busy || !batch.can_start(),
                     onclick: move |_| ongenerate.call(()),
                     if batch.produced() == 0 { "生成這份計畫" } else { "生成剩餘區塊" }
+                }
+                button { class: "soft-button", r#type: "button", disabled: busy || !batch.can_assemble(),
+                    onclick: move |_| onassemble.call(()),
+                    if batch.assembled { "已加入工作桌" } else { "拼裝到工作桌" }
                 }
                 if batch.running {
                     button { class: "text-button", r#type: "button", disabled: batch.stop_requested,
@@ -473,6 +532,98 @@ fn ImageBlock(
             }
             div { class: "image-content",
                 img { src: "{block.path}", alt: "{block.title}", draggable: "false" }
+            }
+        }
+    }
+}
+
+/// Display a scene snapshot with proportional clipping; individual components have no card chrome.
+/// Picking never reorders scene layers; the selector also reaches covered components.
+/// Normal imported image cards paint above these scenes.
+#[component]
+fn AssemblyBlock(
+    assembly: Assembly,
+    selected: Option<(u64, usize)>,
+    onpick: EventHandler<(u64, usize)>,
+    onmove: EventHandler<(u64, usize, Point)>,
+    ondrag: EventHandler<(u64, usize, Point)>,
+) -> Element {
+    let id = assembly.id;
+    let selected_index = selected
+        .filter(|(group, _)| *group == id)
+        .map(|(_, index)| index.to_string())
+        .unwrap_or_default();
+    let rect = assembly.rect;
+    let warnings = assembly
+        .pieces
+        .iter()
+        .flat_map(|piece| {
+            piece
+                .image
+                .warnings
+                .iter()
+                .map(|warning| format!("{}：{warning}", piece.name))
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let count = assembly.warning_count();
+    rsx! {
+        article { class: "assembled-block",
+            onkeydown: move |event| {
+                // Keyboard nudges also reach covered layers without changing their paint order.
+                let delta = match event.key() {
+                    dioxus::html::Key::ArrowLeft => Point { x: -1.0, y: 0.0 },
+                    dioxus::html::Key::ArrowRight => Point { x: 1.0, y: 0.0 },
+                    dioxus::html::Key::ArrowUp => Point { x: 0.0, y: -1.0 },
+                    dioxus::html::Key::ArrowDown => Point { x: 0.0, y: 1.0 },
+                    _ => return,
+                };
+                if let Some((group, index)) = selected
+                    && group == id
+                    && let Some(piece) = assembly.pieces.get(index) {
+                    event.prevent_default();
+                    event.stop_propagation();
+                    onmove.call((id, index, Point { x: piece.rect.x + delta.x, y: piece.rect.y + delta.y }));
+                }
+            },
+            style: "left:{rect.x}px;top:{rect.y}px;width:{rect.width}px;height:{rect.height}px;",
+            header { class: "block-titlebar", title: "點選圖層後拖曳；鍵盤聚焦圖層後可用方向鍵微調。\n{warnings}",
+                span { class: "block-title", "{assembly.title}" }
+                select { class: "layer-picker", aria_label: "{assembly.title}：選取圖層", value: "{selected_index}",
+                    onpointerdown: move |event| event.stop_propagation(),
+                    onkeydown: move |event| event.stop_propagation(),
+                    onchange: move |event| {
+                        if let Ok(index) = event.value().parse::<usize>() { onpick.call((id, index)); }
+                    },
+                    option { value: "", disabled: true, "選取圖層" }
+                    for (index, piece) in assembly.pieces.iter().enumerate().rev() {
+                        option { value: "{index}", "{piece.name}" }
+                    }
+                }
+                span { class: "assembly-warning", title: "{warnings}", "{count} 項待核對" }
+            }
+            div { class: "assembled-scene",
+                style: "background:{assembly.background};",
+                for (index, piece) in assembly.pieces.iter().enumerate() {
+                    div { key: "{index}",
+                        class: if selected == Some((id, index)) { "assembled-piece selected" } else { "assembled-piece" },
+                        role: "button", tabindex: "0", aria_label: "圖層：{piece.name}", aria_pressed: selected == Some((id, index)),
+                        onfocus: move |_| onpick.call((id, index)),
+                        onpointerdown: move |event| {
+                            // Stop the ancestor pan; the workspace bridge captures this pointer for dragging.
+                            event.stop_propagation();
+                            if event.trigger_button() == Some(dioxus::html::input_data::MouseButton::Primary) {
+                                let p = event.client_coordinates();
+                                ondrag.call((id, index, Point { x: p.x, y: p.y }));
+                            }
+                        },
+                        style: "left:{piece.rect.x}px;top:{piece.rect.y}px;width:{piece.rect.width}px;height:{piece.rect.height}px;",
+                        img {
+                            src: "{piece.image.path}", alt: "{piece.name}", draggable: "false",
+                            style: "width:{f64::from(piece.image.width)*piece.scale}px;height:{f64::from(piece.image.height)*piece.scale}px;left:{-f64::from(piece.image.content_bounds[0])*piece.scale}px;top:{-f64::from(piece.image.content_bounds[1])*piece.scale}px;"
+                        }
+                    }
+                }
             }
         }
     }

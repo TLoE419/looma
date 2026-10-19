@@ -5,7 +5,7 @@ const observer = new ResizeObserver(reportSize);
 observer.observe(workspace);
 reportSize();
 workspace.addEventListener("pointerdown", event => {
-    if (event.button === 0 && !event.target.closest("button, input, textarea, a, .image-content")) {
+    if (event.button === 0 && !event.target.closest("button, input, textarea, select, a, .image-content")) {
         workspace.setPointerCapture(event.pointerId);
     }
 });
