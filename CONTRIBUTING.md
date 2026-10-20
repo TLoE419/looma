@@ -23,10 +23,17 @@ Follow [README.md](README.md). Use the pinned Rust toolchain and commit
 incidentally. Format and check the change before opening a pull request:
 
 ```sh
-cargo fmt -- --check
-cargo clippy --locked --all-targets -- -D warnings
-cargo test --locked
+bash scripts/check.sh quality
+bash scripts/check.sh test
+bash scripts/check.sh security
 ```
+
+The three commands match the independent GitHub checks. Security requires
+`cargo install cargo-audit --version 0.22.2 --locked` and access to the RustSec
+advisory database. It audits the full lockfile with warnings denied, without
+suppressing the known advisories tracked in issue #3. A failing security check
+also fails the existing required `macOS checks` aggregate; it must not be treated
+as a passing audit. See [the CI guide](docs/CI.md) for scope and local usage.
 
 The ignored real-service tests require separate, deliberate execution and may
 consume quota. Never provide authentication to CI or a pull request from a fork.
