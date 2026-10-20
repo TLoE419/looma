@@ -1,0 +1,9 @@
+# Template copied beside the patched crates in a disposable verification workspace.
+[workspace]
+members = ["glib", "glib-macros", "gtk3-macros"]
+resolver = "2"
+
+[patch.crates-io]
+glib = { path = "glib" }
+glib-macros = { path = "glib-macros" }
+gtk3-macros = { path = "gtk3-macros" }

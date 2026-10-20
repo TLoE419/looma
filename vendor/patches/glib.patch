@@ -1,0 +1,88 @@
+--- a/src/collections/strv.rs
++++ b/src/collections/strv.rs
+@@ -1476,24 +1476,26 @@
+ 
+     #[test]
+     fn test_into_strv() {
++        // The allocation includes a NULL terminator beyond the logical slice.
++        // Read it through the backing pointer, not an out-of-bounds slice reference.
+         let items = ["str1", "str2", "str3", "str4"];
+ 
+         items[..].run_with_strv(|s| unsafe {
+-            assert!(s.get_unchecked(4).is_null());
++            assert!((*s.as_ptr().add(4)).is_null());
+             assert_eq!(s.len(), items.len());
+             let s = StrV::from_glib_borrow(s.as_ptr() as *const *const c_char);
+             assert_eq!(s, items);
+         });
+ 
+         Vec::from(&items[..]).run_with_strv(|s| unsafe {
+-            assert!(s.get_unchecked(4).is_null());
++            assert!((*s.as_ptr().add(4)).is_null());
+             assert_eq!(s.len(), items.len());
+             let s = StrV::from_glib_borrow(s.as_ptr() as *const *const c_char);
+             assert_eq!(s, items);
+         });
+ 
+         StrV::from(&items[..]).run_with_strv(|s| unsafe {
+-            assert!(s.get_unchecked(4).is_null());
++            assert!((*s.as_ptr().add(4)).is_null());
+             assert_eq!(s.len(), items.len());
+             let s = StrV::from_glib_borrow(s.as_ptr() as *const *const c_char);
+             assert_eq!(s, items);
+@@ -1501,7 +1503,7 @@
+ 
+         let v = items.iter().copied().map(String::from).collect::<Vec<_>>();
+         items.run_with_strv(|s| unsafe {
+-            assert!(s.get_unchecked(4).is_null());
++            assert!((*s.as_ptr().add(4)).is_null());
+             assert_eq!(s.len(), v.len());
+             let s = StrV::from_glib_borrow(s.as_ptr() as *const *const c_char);
+             assert_eq!(s, items);
+@@ -1509,7 +1511,7 @@
+ 
+         let v = items.iter().copied().map(GString::from).collect::<Vec<_>>();
+         items.run_with_strv(|s| unsafe {
+-            assert!(s.get_unchecked(4).is_null());
++            assert!((*s.as_ptr().add(4)).is_null());
+             assert_eq!(s.len(), v.len());
+             let s = StrV::from_glib_borrow(s.as_ptr() as *const *const c_char);
+             assert_eq!(s, items);
+--- a/src/variant_iter.rs
++++ b/src/variant_iter.rs
+@@ -117,13 +117,13 @@
+ 
+     fn impl_get(&self, i: usize) -> &'a str {
+         unsafe {
+-            let p: *mut libc::c_char = std::ptr::null_mut();
++            let mut p: *mut libc::c_char = std::ptr::null_mut();
+             let s = b"&s\0";
+             ffi::g_variant_get_child(
+                 self.variant.to_glib_none().0,
+                 i,
+                 s as *const u8 as *const _,
+-                &p,
++                &mut p,
+                 std::ptr::null::<i8>(),
+             );
+             let p = std::ffi::CStr::from_ptr(p);
+@@ -369,3 +369,19 @@
+         assert_eq!(iter.last(), Some("2"));
+     }
+ }
++
++#[cfg(test)]
++#[test]
++fn string_iterator_out_pointer_regression() {
++    use crate::variant::ToVariant;
++    let value = ["first", "middle", "last"].to_variant();
++    assert_eq!(
++        value.array_iter_str().unwrap().collect::<Vec<_>>(),
++        ["first", "middle", "last"]
++    );
++    assert_eq!(value.array_iter_str().unwrap().next(), Some("first"));
++    assert_eq!(value.array_iter_str().unwrap().nth(1), Some("middle"));
++    assert_eq!(value.array_iter_str().unwrap().last(), Some("last"));
++    assert_eq!(value.array_iter_str().unwrap().next_back(), Some("last"));
++    assert_eq!(value.array_iter_str().unwrap().nth_back(1), Some("middle"));
++}
