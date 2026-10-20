@@ -1,0 +1,51 @@
+{
+  "schema_version": "1.0",
+  "request": "測試點餐介面的三個獨立元件：搜尋欄、雞腿飯卡片與牛肉堡卡片。",
+  "assumptions": ["這份測試計畫只包含三個元件，不包含完整介面的其他部分。"],
+  "scene": {
+    "title": "點餐元件生成測試",
+    "width": 390,
+    "height": 844,
+    "visual_rules": {
+      "style": "簡潔親切的繁體中文手機點餐介面",
+      "background_color": "#FFF9F2",
+      "primary_color": "#FF681A",
+      "text_color": "#292521",
+      "font": "清楚易讀的繁體中文無襯線字體",
+      "corner_radius": 16,
+      "image_style": "暖光寫實食物攝影，斜上方拍攝"
+    }
+  },
+  "blocks": [
+    {
+      "id": "search",
+      "name": "搜尋欄",
+      "description": "單獨的圓角搜尋欄，淡灰邊框與暖白內底，左側灰色放大鏡圖示，提示文字為搜尋餐點。圓角外側透明，不包含其他介面元件。",
+      "frame": { "x": 16, "y": 100, "width": 358, "height": 44 },
+      "layer": 1,
+      "transparent_background": true,
+      "text": ["搜尋餐點"],
+      "reference_blocks": []
+    },
+    {
+      "id": "chicken_card",
+      "name": "雞腿飯卡片",
+      "description": "單獨的圓角餐點卡片，上方約三分之二為雞腿飯照片，下方暖白區包含名稱與橘色價格，右下角橘色圓形白色加號按鈕。卡片外側透明，不含搜尋欄或其他卡片。",
+      "frame": { "x": 16, "y": 380, "width": 173, "height": 218 },
+      "layer": 1,
+      "transparent_background": true,
+      "text": ["香煎雞腿飯", "$180"],
+      "reference_blocks": []
+    },
+    {
+      "id": "burger_card",
+      "name": "牛肉堡卡片",
+      "description": "單獨的牛肉堡餐點卡片，參照雞腿飯卡片的圓角、字級、內距、照片比例、價格及加號位置。只把餐點照片換成牛肉堡，名稱換成經典牛肉堡，價格換成 $160。卡片外側透明，不含雞腿飯或其他元件。",
+      "frame": { "x": 201, "y": 380, "width": 173, "height": 218 },
+      "layer": 1,
+      "transparent_background": true,
+      "text": ["經典牛肉堡", "$160"],
+      "reference_blocks": ["chicken_card"]
+    }
+  ]
+}
