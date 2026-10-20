@@ -3,6 +3,7 @@
 
 use crate::{
     codex,
+    generation::{Batch, BlockState},
     workspace_model::{Block, DeskState, Point, View, dragged},
 };
 use dioxus::prelude::*;
@@ -27,7 +28,83 @@ enum Drag {
 pub fn app() -> Element {
     let mut input = use_signal(String::new);
     let mut status = use_signal(String::new); // Shared display for progress, errors, and the latest text reply.
-    let mut waiting = use_signal(|| false); // Image and text requests share this flag to prevent concurrent submissions.
+    // Planning, text, single images, and batches share one submission guard.
+    let mut waiting = use_signal(|| false);
+
+    // Keep the latest validated plan in memory for this session, separate from workspace images.
+    let mut split_plan = use_signal(|| None::<Batch>);
+
+    // Snapshot the input and share the request guard with text/image actions to prevent duplicate work.
+    // Only success replaces the plan; an error leaves the previous plan and editable input intact.
+    let plan_images = Callback::new(move |_| {
+        let request = input();
+        if waiting() || request.trim().is_empty() {
+            return;
+        }
+        waiting.set(true);
+        status.set("正在依模板規劃圖片區塊…".into());
+
+        // Await text planning without blocking the workspace or adding any image blocks.
+        spawn(async move {
+            match codex::plan_images(request).await {
+                Ok(plan) => {
+                    status.set(format!(
+                        "拆分計畫已完成：{} 個區塊，尚未生成圖片。",
+                        plan.blocks.len()
+                    ));
+                    split_plan.set(Some(Batch::new(plan)));
+                }
+                Err(error) => status.set(format!("規劃失敗：{error}")),
+            }
+            waiting.set(false);
+        });
+    });
+
+    // Freeze the plan for the whole batch and advance only after each image has been retained.
+    // Explicit retries select one failed asset, then allow its blocked descendants to proceed.
+    let generate_plan = Callback::new(move |retry: Option<usize>| {
+        if waiting() {
+            return;
+        }
+        let started = split_plan
+            .write()
+            .as_mut()
+            .is_some_and(|batch| batch.start(retry));
+        if !started {
+            return;
+        }
+        waiting.set(true);
+        spawn(async move {
+            loop {
+                let next = split_plan.write().as_mut().and_then(Batch::next_job);
+                let Some((index, job)) = next else {
+                    break;
+                };
+                status.set(format!(
+                    "正在生成「{}」（第 {} 個區塊）…",
+                    job.block.name,
+                    index + 1
+                ));
+                let result = codex::generate_block(job).await;
+                if let Some(batch) = split_plan.write().as_mut() {
+                    batch.complete(index, result);
+                }
+            }
+            if let Some(batch) = split_plan.write().as_mut() {
+                batch.finish();
+                status.set(batch.summary());
+            }
+            waiting.set(false);
+        });
+    });
+
+    // Stop at the next job boundary; do not interrupt or discard the in-flight image.
+    let stop_generation = Callback::new(move |_| {
+        if let Some(batch) = split_plan.write().as_mut() {
+            batch.request_stop();
+            status.set("已要求停止後續生成；目前這張完成或逾時後停止。".into());
+        }
+    });
 
     // The model owns block state; view and drag tracking remain local to this UI.
     let mut desk = use_signal(DeskState::new);
@@ -184,18 +261,33 @@ pub fn app() -> Element {
                         }
                     }
                 }
-                if desk.read().blocks().is_empty() {
+
+                // A visible plan is useful content even when no images have been imported.
+                if desk.read().blocks().is_empty() && split_plan.read().is_none() {
                     div { class: "empty-state",
                         span { class: "empty-symbol", "✧" }
                         h1 { "把想法，放到桌上。" }
-                        p { "加入一張設計圖片，或在下方描述你的想法。" }
+                        p { "輸入想法，先規劃圖片的獨立區塊。" }
                         span { class: "empty-hint", "自由擺放 · 一起觀看 · 慢慢成形" }
                     }
                 }
             }
+
+            // Outside the draggable workspace, panel controls cannot accidentally start panning.
+            // Closing discards the displayed session plan without changing imported images.
+            if let Some(batch) = split_plan() {
+                PlanPanel {
+                    batch, busy: waiting(),
+                    ongenerate: move |_| generate_plan.call(None),
+                    onretry: move |index| generate_plan.call(Some(index)),
+                    onstop: move |_| stop_generation.call(()),
+                    onclose: move |_| { if !waiting() { split_plan.set(None); } }
+                }
+            }
             footer { class: "dock",
-                form { class: "composer", onsubmit: move |event| { event.prevent_default(); generate.call(()); },
-                    div { class: "composer-heading", span { class: "mode-badge", "✧ 圖片" } span { "與 Looma 一起織成畫面" } }
+                // Form submission plans assets; image generation remains a separate action.
+                form { class: "composer", onsubmit: move |event| { event.prevent_default(); plan_images.call(()); },
+                    div { class: "composer-heading", span { class: "mode-badge", "✧ 拆分規劃" } span { "先規劃 1～12 個區塊，再於計畫面板生成圖片" } }
                     textarea { aria_label: "圖片描述或討論內容", placeholder: "描述你的想法，讓 Looma 一起織成畫面…", value: "{input}", rows: "2",
                         oninput: move |event| input.set(event.value()) }
                     div { class: "composer-actions",
@@ -212,8 +304,13 @@ pub fn app() -> Element {
                                 waiting.set(false);
                             });
                         }, "文字回覆" }
+
+                        // Preserve the existing single-image action without attaching the plan.
+                        button { r#type: "button", class: "text-button", disabled: waiting() || input().trim().is_empty(),
+                            onclick: move |_| generate.call(()), "生成單張圖"
+                        }
                         button { r#type: "submit", class: "primary-button", disabled: waiting() || input().trim().is_empty(),
-                            if waiting() { "處理中…" } else { "生成圖片 ↗" }
+                            if waiting() { "處理中…" } else { "規劃圖片 ↗" }
                         }
                     }
                     if !status().is_empty() { p { class: "status", role: "status", "{status}" } }
@@ -235,6 +332,117 @@ pub fn app() -> Element {
                 }
             }
         }
+    }
+}
+
+/// Present the immutable plan beside session-only previews and generation controls.
+/// Parent callbacks own requests; disabling close/replan prevents results leaking into another plan.
+#[component]
+fn PlanPanel(
+    batch: Batch,
+    busy: bool,
+    onclose: EventHandler<()>,
+    ongenerate: EventHandler<()>,
+    onretry: EventHandler<usize>,
+    onstop: EventHandler<()>,
+) -> Element {
+    let plan = &batch.plan;
+    let json = serde_json::to_string_pretty(plan).expect("validated plans serialize to JSON");
+    rsx! {
+        aside { class: "plan-panel", aria_label: "圖片拆分計畫",
+            div { class: "plan-heading",
+                h2 { "{plan.scene.title}" }
+                button { class: "text-button", r#type: "button", disabled: busy, onclick: move |_| onclose.call(()), "關閉計畫" }
+            }
+            p { class: "plan-meta", "{plan.scene.width} × {plan.scene.height} · {plan.blocks.len()} 個區塊" }
+            div { class: "batch-controls",
+                button { class: "primary-button", r#type: "button", disabled: busy || !batch.can_start(),
+                    onclick: move |_| ongenerate.call(()),
+                    if batch.produced() == 0 { "生成這份計畫" } else { "生成剩餘區塊" }
+                }
+                if batch.running {
+                    button { class: "text-button", r#type: "button", disabled: batch.stop_requested,
+                        onclick: move |_| onstop.call(()),
+                        if batch.stop_requested { "等待目前圖片結束" } else { "停止後續生成" }
+                    }
+                }
+            }
+            p { class: "plan-meta", role: "status", "{batch.summary()}" }
+            p { class: "plan-meta", "本計畫共 {plan.blocks.len()} 張圖片，會逐張請求生成。結果先預覽，不自動拼裝。" }
+
+            // Show submitted input, which may differ from text edited while the request was pending.
+            details { class: "plan-request",
+                summary { "原始提示詞" }
+                p { "{plan.request}" }
+            }
+            p { class: "plan-style", "{plan.scene.visual_rules.style}" }
+
+            // Distinguish model-selected defaults from requirements explicitly supplied by the user.
+            if !plan.assumptions.is_empty() {
+                details { class: "plan-assumptions", open: true,
+                    summary { "規劃採用的假設" }
+                    ul { for assumption in &plan.assumptions { li { "{assumption}" } } }
+                }
+            }
+
+            // Preserve model order for backward references and equal-layer paint ordering.
+            ol { class: "plan-blocks",
+                for (index, block) in plan.blocks.iter().enumerate() {
+                    li { key: "{block.id}",
+                        h3 { "{block.name}" }
+                        p { "{block.description}" }
+                        p { class: "plan-meta", "位置 {block.frame.x}, {block.frame.y} · {block.frame.width} × {block.frame.height} · 圖層 {block.layer}" }
+                        p { class: "plan-meta", if block.transparent_background { "外圍透明" } else { "不透明圖片" } }
+                        if !block.text.is_empty() {
+                            p { "圖片文字：" {block.text.join(" ／ ")} }
+                        }
+                        if !block.reference_blocks.is_empty() {
+                            p { class: "plan-meta", "參考區塊：" {block.reference_blocks.join("、")} }
+                        }
+                        BlockPreview {
+                            state: batch.states()[index].clone(), name: block.name.clone(), busy,
+                            onretry: move |_| onretry.call(index)
+                        }
+                    }
+                }
+            }
+
+            // Render JSON as escaped text; the focusable pre enables keyboard scrolling.
+            details { class: "plan-json",
+                summary { "查看完整資料（JSON）" }
+                pre { tabindex: "0", "{json}" }
+            }
+        }
+    }
+}
+
+/// Display retained pixels without cropping or forcing the planned aspect ratio onto the preview.
+/// Produced means decodable; warnings keep assembly readiness and visual acceptance distinct.
+#[component]
+fn BlockPreview(state: BlockState, name: String, busy: bool, onretry: EventHandler<()>) -> Element {
+    match state {
+        BlockState::Pending => rsx! { p { class: "plan-meta", "等待中" } },
+        BlockState::Generating => {
+            rsx! { p { class: "generation-active", role: "status", "生成中…" } }
+        }
+        BlockState::Blocked(ids) => {
+            rsx! { p { class: "generation-warning", "等待參考圖片：" {ids.join("、")} } }
+        }
+        BlockState::Failed(error) => rsx! {
+            div { class: "generation-failure",
+                p { class: "generation-error", "生成失敗：{error}" }
+                button { class: "soft-button", r#type: "button", disabled: busy, onclick: move |_| onretry.call(()), "重試此區塊" }
+            }
+        },
+        BlockState::Produced(image) => rsx! {
+            div { class: "generated-result",
+                p { class: "plan-meta", "已產出 · {image.width} × {image.height} 像素 · 尚未驗收拼裝品質" }
+                div { class: "generated-preview", img { src: "{image.path}", alt: "{name}生成結果", draggable: "false" } }
+                p { class: "plan-meta", if image.has_transparency { "含透明像素；去背邊緣仍需人工檢查。" } else { "不含透明像素。" } }
+                for warning in &image.warnings { p { class: "generation-warning", "{warning}" } }
+                details { summary { "檔案位置" } p { class: "plan-meta", "{image.path}" } }
+            }
+        },
     }
 }
 

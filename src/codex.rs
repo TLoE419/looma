@@ -1,8 +1,21 @@
 //! Run one-shot Codex subprocesses for text replies and image generation.
 //! Uses the locally installed Codex executable and its available authentication.
 
+use crate::generation::{BlockJob, GeneratedImage, ReferenceImage};
 use std::time::Duration;
 use tokio::process::Command;
+
+/// Fill the fixed planning template, then validate before exposing it to the UI.
+/// Reuses the text request's authentication and two-minute timeout; never calls image generation.
+pub async fn plan_images(request: String) -> Result<crate::plan::Plan, String> {
+    if request.trim().is_empty() {
+        return Err("請先輸入提示詞。".into());
+    }
+
+    // Keep input untrimmed for exact response matching; only the emptiness check trims it.
+    let reply = ask(crate::plan::prompt(&request)).await?;
+    crate::plan::Plan::parse(&reply, &request)
+}
 
 /// Return trimmed stdout from a text request; timeouts, process failures, and empty replies are errors.
 pub async fn ask(prompt: String) -> Result<String, String> {
@@ -41,6 +54,21 @@ pub async fn ask(prompt: String) -> Result<String, String> {
 /// Generate a PNG in a per-request directory and return its retained file path.
 /// Validate PNG decoding before retaining the file; image content is not assessed.
 pub async fn generate_image(description: String) -> Result<String, String> {
+    generate_with_references(description, &[]).await
+}
+
+/// Generate one planned asset and retain inspectable warnings without altering its pixels.
+pub async fn generate_block(job: BlockJob) -> Result<GeneratedImage, String> {
+    let path = generate_with_references(job.description(), &job.references).await?;
+    GeneratedImage::inspect(path, &job.block)
+}
+
+/// Both generation entry points share isolated output directories and a per-image timeout.
+/// References are copied before launching the CLI, so missing files fail without a service request.
+async fn generate_with_references(
+    description: String,
+    references: &[ReferenceImage],
+) -> Result<String, String> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("generated-images"); // Resolve output from the build-time project directory, not the current working directory.
     std::fs::create_dir_all(&root).map_err(|error| format!("無法建立圖片目錄：{error}"))?;
 
@@ -50,28 +78,15 @@ pub async fn generate_image(description: String) -> Result<String, String> {
         .tempdir_in(root)
         .map_err(|error| format!("無法建立本次生成目錄：{error}"))?;
 
+    let attachments = stage_references(directory.path(), references)?;
+
     let prompt = format!(
         "使用原生圖片生成工具生成圖片，描述如下：\n{description}\n\n\
          將實際生成的圖片複製到目前目錄的 generated.png，必須為 PNG 格式。\
          不要以 SVG、HTML 或程式繪圖代替，不要使用 API 腳本，不要委派其他代理。\
          若工具不可用或生成失敗，請直接說明原因，不要建立替代圖片。"
     );
-    let mut command = Command::new("codex");
-    command
-        .current_dir(directory.path())
-        .args([
-            "exec",
-            "--ignore-user-config",
-            "--sandbox",
-            "workspace-write",
-            "--skip-git-repo-check",
-            "--ephemeral",
-            "--color",
-            "never",
-            "--",
-        ])
-        .arg(prompt)
-        .kill_on_drop(true); // Request termination of the direct child on drop; descendants are not managed here.
+    let mut command = image_command(directory.path(), prompt, &attachments);
 
     let output = tokio::time::timeout(Duration::from_secs(300), command.output())
         .await
@@ -82,6 +97,51 @@ pub async fn generate_image(description: String) -> Result<String, String> {
     }
 
     validate_and_keep_image(directory, &output.stdout)
+}
+
+/// Use stable attachment filenames so commas or option-like source names cannot affect CLI parsing.
+/// Successful request directories retain their reference copies as well as the generated image.
+fn stage_references(
+    directory: &std::path::Path,
+    references: &[ReferenceImage],
+) -> Result<Vec<std::path::PathBuf>, String> {
+    references
+        .iter()
+        .enumerate()
+        .map(|(index, reference)| {
+            image::image_dimensions(&reference.path)
+                .map_err(|error| format!("參考圖片 {} 無法讀取：{error}", reference.id))?;
+            let destination = directory.join(format!("reference-{}.png", index + 1));
+            std::fs::copy(&reference.path, &destination)
+                .map_err(|error| format!("無法準備參考圖片 {}：{error}", reference.id))?;
+            Ok(destination)
+        })
+        .collect()
+}
+
+/// Attach actual image files in the same order as the IDs named in the prompt, without a shell.
+fn image_command(
+    directory: &std::path::Path,
+    prompt: String,
+    attachments: &[std::path::PathBuf],
+) -> Command {
+    let mut command = Command::new("codex");
+    command.current_dir(directory).args([
+        "exec",
+        "--ignore-user-config",
+        "--sandbox",
+        "workspace-write",
+        "--skip-git-repo-check",
+        "--ephemeral",
+        "--color",
+        "never",
+    ]);
+    for path in attachments {
+        command.arg("--image").arg(path);
+    }
+    // Drop terminates only the direct child; stopping a batch does not cancel the current image.
+    command.arg("--").arg(prompt).kill_on_drop(true);
+    command
 }
 
 /// Own the request directory until decoding succeeds; errors drop it and attempt cleanup.
@@ -104,6 +164,121 @@ fn validate_and_keep_image(directory: tempfile::TempDir, stdout: &[u8]) -> Resul
 // Validation tests are local; opt-in smoke tests below send real requests.
 #[cfg(test)]
 mod tests {
+    // Exercise the actual batch/CLI transport, including a dependent image attachment.
+    // This deliberately costs three image requests and must never run as part of default CI.
+    #[test]
+    #[ignore = "需要已登入的 Codex 與網路，會真實生成三張獨立圖片"]
+    fn real_batch() {
+        use crate::{
+            generation::{Batch, BlockState},
+            plan::Plan,
+        };
+        let plan = Plan::parse(
+            include_str!("fixtures/ordering-plan.json"),
+            "測試點餐介面的三個獨立元件：搜尋欄、雞腿飯卡片與牛肉堡卡片。",
+        )
+        .unwrap();
+        let mut batch = Batch::new(plan);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        assert!(batch.start(None));
+        while let Some((index, job)) = batch.next_job() {
+            println!(
+                "Generating {} with {} reference image(s)",
+                job.block.id,
+                job.references.len()
+            );
+            let result = runtime.block_on(super::generate_block(job));
+            println!("Result: {result:?}");
+            batch.complete(index, result);
+        }
+        batch.finish();
+        println!("{}", batch.summary());
+        assert_eq!(batch.produced(), 3, "{:#?}", batch.states());
+        let paths = batch
+            .states()
+            .iter()
+            .map(|state| match state {
+                BlockState::Produced(image) => &image.path,
+                _ => unreachable!(),
+            })
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(paths.len(), 3);
+        if let (BlockState::Produced(chicken), BlockState::Produced(burger)) =
+            (&batch.states()[1], &batch.states()[2])
+        {
+            let attached = std::path::Path::new(&burger.path)
+                .parent()
+                .unwrap()
+                .join("reference-1.png");
+            assert_eq!(
+                std::fs::read(&attached).unwrap(),
+                std::fs::read(&chicken.path).unwrap()
+            );
+        }
+    }
+
+    // The transport must pass real files as separate arguments in declared reference order.
+    #[test]
+    fn references_are_staged_and_attached_without_shell_or_filename_ambiguity() {
+        let source = tempfile::tempdir().unwrap();
+        let request = tempfile::tempdir().unwrap();
+        let path = source.path().join("--a,b image.png");
+        image::RgbImage::new(2, 2).save(&path).unwrap();
+        let references = vec![crate::generation::ReferenceImage {
+            id: "first".into(),
+            path: path.to_string_lossy().into_owned(),
+        }];
+        let attachments = super::stage_references(request.path(), &references).unwrap();
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            std::fs::read(&attachments[0]).unwrap()
+        );
+        let command = super::image_command(request.path(), "--not-an-option".into(), &attachments);
+        let args = command
+            .as_std()
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            &args[args.len() - 4..],
+            [
+                "--image",
+                attachments[0].to_str().unwrap(),
+                "--",
+                "--not-an-option"
+            ]
+        );
+        std::fs::remove_file(&path).unwrap();
+        assert!(
+            super::stage_references(request.path(), &references)
+                .unwrap_err()
+                .contains("first")
+        );
+    }
+
+    // Explicitly opted-in service check: inspect count, dimensions, and a transparent subject.
+    // Print the validated plan as evidence without generating any image files.
+    #[test]
+    #[ignore = "需要已登入的 Codex 與網路，只規劃，不生成圖片"]
+    fn real_plan() {
+        let request =
+            "公園裡坐著一隻貓，請規劃為公園背景與透明背景貓咪兩個圖片區塊。整體尺寸 1000 × 800。";
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let plan = runtime
+            .block_on(super::plan_images(request.into()))
+            .expect("應取得合法拆分計畫");
+        assert_eq!(plan.blocks.len(), 2);
+        assert_eq!((plan.scene.width, plan.scene.height), (1000, 800));
+        assert!(plan.blocks.iter().any(|block| block.transparent_background));
+        println!("{}", serde_json::to_string_pretty(&plan).unwrap());
+    }
+
     #[test]
     fn valid_png_is_kept_and_remains_decodable() {
         let parent = tempfile::tempdir().unwrap();

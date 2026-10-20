@@ -50,6 +50,33 @@ textarea:focus { outline: none; }
 .zoom-controls output { min-width: 48px; text-align: center; font-size: 12px; font-variant-numeric: tabular-nums; color: #64728b; }
 .zoom-controls .fit-button { padding: 0 9px; font-size: 12px; }
 .control-divider { height: 19px; width: 1px; margin: 0 4px; background: #e7ebf2; }
+
+/* Scroll planning content independently while leaving room above the input dock. */
+.plan-panel { position: absolute; top: 86px; right: 30px; bottom: 230px; width: min(580px, calc(100% - 60px)); padding: 22px; overflow: auto; background: #fff; border: 1px solid #dfe3eb; border-radius: 18px; box-shadow: 0 10px 35px #293e6c12; z-index: 11; overflow-wrap: anywhere; user-select: text; }
+.plan-heading { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
+.plan-heading h2 { font-size: 20px; margin: 0; }
+.plan-heading button { flex-shrink: 0; }
+.plan-panel p, .plan-panel li { font-size: 13px; line-height: 1.65; }
+.plan-panel .plan-meta { font-size: 12px; color: #64728b; }
+.plan-panel summary { cursor: pointer; font-size: 13px; padding: 6px 0; }
+
+/* Preserve the submitted prompt's line breaks when its disclosure is expanded. */
+.plan-request p { white-space: pre-wrap; }
+.plan-blocks { padding-left: 24px; }
+.plan-blocks > li { padding: 10px 0; border-bottom: 1px solid #edf0f5; }
+.plan-blocks h3 { font-size: 14px; margin: 0 0 6px; }
+.plan-blocks p { margin: 5px 0; }
+
+/* Keep large JSON responses scrollable without expanding the whole panel beyond the window. */
+.plan-json pre { padding: 12px; background: #f5f7fa; border-radius: 10px; overflow: auto; font-size: 12px; max-height: 360px; }
+
+/* Preserve each generated image's actual ratio; the checkerboard only visualizes its alpha. */
+.generated-preview { margin: 10px 0; border-radius: 10px; overflow: hidden; background-color: #fff; background-image: conic-gradient(#edf0f5 25%, transparent 0 50%, #edf0f5 0 75%, transparent 0); background-size: 16px 16px; }
+.generated-preview img { display: block; width: 100%; height: auto; max-height: 300px; object-fit: contain; }
+.batch-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.generation-active { color: #365b9b; }
+.plan-panel .generation-warning { color: #895500; }
+.generation-error { color: #a12c32; white-space: pre-wrap; max-height: 160px; overflow: auto; }
 @media (max-width: 760px) {
     .topbar { padding: 0 18px; }
     .workspace-label { display: none; }
@@ -57,6 +84,11 @@ textarea:focus { outline: none; }
     .zoom-controls { justify-self: end; }
     .workspace { inset: 76px 12px 266px; }
     .composer { padding: 12px 16px; border-radius: 18px; }
+
+    /* Wrap the added action buttons and reserve room for the taller input dock. */
+    .composer-actions { flex-wrap: wrap; }
+    .block-count { flex-basis: 100%; }
+    .plan-panel { left: 12px; right: 12px; width: auto; bottom: 292px; padding: 16px; }
 }
 @media (max-height: 620px) {
     .topbar { height: 62px; }
@@ -65,7 +97,13 @@ textarea:focus { outline: none; }
     textarea { height: 35px; font-size: 13px; }
     .composer { padding-top: 10px; padding-bottom: 9px; }
     .dock { bottom: 12px; }
+
+    /* Align the panel with the compact header and dock used in short windows. */
+    .plan-panel { top: 70px; bottom: 218px; }
 }
 @media (max-width: 760px) and (max-height: 620px) {
     .workspace { bottom: 252px; }
+
+    /* Narrow, short windows also need space for the stacked zoom controls. */
+    .plan-panel { bottom: 272px; }
 }
