@@ -13,6 +13,7 @@ case "${1:-all}" in
     security)
         bash scripts/test-publication-guard.sh
         bash scripts/check-publication.sh
+        python3 scripts/check-dependency-patches.py --verify-upstream
         cargo audit --deny warnings
         ;;
     all)

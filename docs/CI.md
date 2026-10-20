@@ -1,15 +1,16 @@
 # GitHub automated checks
 
-Pull requests, pushes, and manual dispatch run three independent jobs:
+Pull requests, pushes, and manual dispatch run independently visible jobs:
 
 | GitHub result | Local command | Scope |
 | --- | --- | --- |
 | Code quality | `bash scripts/check.sh quality` | Rust formatting and warnings-denied Clippy on macOS |
 | Functional tests | `bash scripts/check.sh test` | Local Rust tests on macOS; ignored live-service tests stay ignored |
-| Security checks | `bash scripts/check.sh security` | Publication-path guard/self-test and strict full-lockfile RustSec audit on Linux |
+| Security checks | `bash scripts/check.sh security` | Publication paths, official-source patch reconstruction and strict full-lockfile RustSec audit |
+| Dependency patch tests | `python3 scripts/check-dependency-patches.py --test` | Optimized GLib and macro tests on Linux with GTK development libraries |
 
 The existing required name **macOS checks** is retained as an aggregate. It runs
-with `always()` and passes only if all three jobs succeeded. A failed, cancelled,
+with `always()` and passes only if all four jobs succeeded. A failed, cancelled,
 or skipped dependency fails the aggregate. No branch-protection settings need
 to change, and none are changed by this PR. The legacy name is retained for
 compatibility even though security runs on Linux.
@@ -27,20 +28,20 @@ cargo install cargo-audit --version 0.22.2 --locked
 Quality/tests can use `CARGO_NET_OFFLINE=true` when dependencies are cached.
 Security needs network access to refresh the RustSec database and inspect yanked
 packages; do not claim a cached advisory snapshot is a fresh security result.
-The application dependency versions and Cargo.lock are not changed by this setup.
+The dependency remediation changes the application lockfile and adds four source overrides; see the patch guide for the exact scope.
 
-## Known failing security baseline
+## Dependency remediation and ongoing security requirements
 
-The full lockfile currently has **five unsuppressed advisories**: three
-unmaintained dependencies and two unsoundness warnings (tracked in issue #3).
-`cargo audit --deny warnings` exits nonzero. The Security checks job and aggregate
-will therefore be red while those findings remain. No ignore IDs, target filters,
-`continue-on-error`, or warning-only fallback turn these results green.
+The five original advisories are addressed by source-tracked parent updates and
+backports described in [DEPENDENCY_PATCHES.md](DEPENDENCY_PATCHES.md). Local path
+sources are not covered like registry packages by RustSec: the security job
+therefore verifies the exact source inventory and reconstructs each patch from
+its checksum-verified official archive. A separate required Linux job tests
+patched libraries and diagnostic regressions with a locked verification workspace.
 
-After this workflow is merged, that strict security result becomes part of the
-existing required aggregate. This intentionally blocks subsequent merges while
-the findings remain; deciding a different risk policy requires a separate,
-explicit maintainer decision. This PR does not resolve the upstream advisories.
+Security failures still block the existing required aggregate. No ignore IDs,
+target filters, `continue-on-error`, branch-protection changes or audit bypass
+are introduced. A passing audit alone is insufficient for accepting local patches.
 
 ## Publication-path protection
 
@@ -67,7 +68,7 @@ repository settings are installed or altered.
 
 Local failure probes verify that formatting errors, unused variables, and a
 failing Rust test fail their respective groups. The aggregate step is exercised
-against all 64 success/failure/skipped/cancelled combinations. Publication guard
+against all 256 success/failure/skipped/cancelled combinations. Publication guard
 probes use disposable temporary repositories; no actual credentials are used.
 
 References: [GitHub workflow syntax](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax)

@@ -31,7 +31,8 @@ bash scripts/check.sh security
 The three commands match the independent GitHub checks. Security requires
 `cargo install cargo-audit --version 0.22.2 --locked` and access to the RustSec
 advisory database. It audits the full lockfile with warnings denied, without
-suppressing the known advisories tracked in issue #3. A failing security check
+suppressing advisory findings. Local source overrides additionally require source
+reconstruction and optimized tests described in [the patch guide](docs/DEPENDENCY_PATCHES.md). A failing security check
 also fails the existing required `macOS checks` aggregate; it must not be treated
 as a passing audit. See [the CI guide](docs/CI.md) for scope and local usage.
 

@@ -1,0 +1,159 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -52,8 +52,6 @@
+ [dependencies.proc-macro-crate]
+ version = "1.0"
+ 
+-[dependencies.proc-macro-error]
+-version = "1.0"
+ 
+ [dependencies.proc-macro2]
+ version = "1.0"
+--- a/src/composite_template_derive.rs
++++ b/src/composite_template_derive.rs
+@@ -1,7 +1,6 @@
+ // Take a look at the license at the top of the repository in the LICENSE file.
+ 
+ use proc_macro2::TokenStream;
+-use proc_macro_error::{abort, abort_call_site};
+ use quote::quote;
+ use syn::Data;
+ 
+@@ -25,12 +24,9 @@
+     }
+ }
+ 
+-fn gen_template_child_bindings(fields: &syn::Fields) -> TokenStream {
++fn gen_template_child_bindings(fields: &syn::Fields) -> syn::Result<TokenStream> {
+     let crate_ident = crate_ident_new();
+-    let attributed_fields = match parse_fields(fields) {
+-        Ok(fields) => fields,
+-        Err(err) => abort!(err.span(), err.to_string()),
+-    };
++    let attributed_fields = parse_fields(fields)?;
+ 
+     let recurse = attributed_fields.iter().map(|field| match field.attr.ty {
+         FieldAttributeType::TemplateChild => {
+@@ -51,33 +47,35 @@
+         }
+     });
+ 
+-    quote! {
++    Ok(quote! {
+         #(#recurse)*
+-    }
++    })
+ }
+ 
+-pub fn impl_composite_template(input: &syn::DeriveInput) -> TokenStream {
++pub fn impl_composite_template(input: &syn::DeriveInput) -> syn::Result<TokenStream> {
+     let name = &input.ident;
+     let crate_ident = crate_ident_new();
+ 
+-    let source = match parse_template_source(input) {
+-        Ok(v) => v,
+-        Err(e) => abort_call_site!(
+-            "{}: derive(CompositeTemplate) requires #[template(...)] to specify 'file', 'resource', or 'string'",
+-            e
+-        ),
+-    };
++    let source = parse_template_source(input).map_err(|e| syn::Error::new(
++        proc_macro2::Span::call_site(),
++        format!("{}: derive(CompositeTemplate) requires #[template(...)] to specify 'file', 'resource', or 'string'", e),
++    ))?;
+ 
+     let set_template = gen_set_template(source);
+ 
+     let fields = match input.data {
+         Data::Struct(ref s) => &s.fields,
+-        _ => abort_call_site!("derive(CompositeTemplate) only supports structs"),
++        _ => {
++            return Err(syn::Error::new(
++                proc_macro2::Span::call_site(),
++                "derive(CompositeTemplate) only supports structs",
++            ))
++        }
+     };
+ 
+-    let template_children = gen_template_child_bindings(fields);
++    let template_children = gen_template_child_bindings(fields)?;
+ 
+-    quote! {
++    Ok(quote! {
+         impl #crate_ident::subclass::widget::CompositeTemplate for #name {
+             fn bind_template(klass: &mut Self::Class) {
+                 #set_template
+@@ -87,5 +85,5 @@
+                 }
+             }
+         }
+-    }
++    })
+ }
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -5,7 +5,6 @@
+ mod util;
+ 
+ use proc_macro::TokenStream;
+-use proc_macro_error::proc_macro_error;
+ use syn::{parse_macro_input, DeriveInput};
+ 
+ /// Derive macro for using a composite template in a widget.
+@@ -81,9 +80,54 @@
+ /// # fn main() {}
+ /// ```
+ #[proc_macro_derive(CompositeTemplate, attributes(template, template_child))]
+-#[proc_macro_error]
+ pub fn composite_template_derive(input: TokenStream) -> TokenStream {
+     let input = parse_macro_input!(input as DeriveInput);
+-    let gen = composite_template_derive::impl_composite_template(&input);
++    let gen = composite_template_derive::impl_composite_template(&input)
++        .unwrap_or_else(syn::Error::into_compile_error);
+     gen.into()
+ }
++
++#[cfg(test)]
++mod backport_tests {
++    #[test]
++    fn missing_template_returns_a_diagnostic() {
++        let input = syn::parse_quote!(
++            struct MissingTemplate;
++        );
++        let error = super::composite_template_derive::impl_composite_template(&input).unwrap_err();
++        assert!(error.to_string().contains("requires #[template"));
++    }
++
++    #[test]
++    fn non_struct_template_returns_a_diagnostic() {
++        let input = syn::parse_quote!(
++            #[template(string = "<interface/>")]
++            enum Invalid {
++                Value,
++            }
++        );
++        let error = super::composite_template_derive::impl_composite_template(&input).unwrap_err();
++        assert!(error.to_string().contains("only supports structs"));
++    }
++
++    #[test]
++    fn invalid_child_attribute_returns_a_diagnostic() {
++        let input = syn::parse_quote!(
++            #[template(string = "<interface/>")]
++            struct Invalid {
++                #[template_child(unknown = "x")]
++                child: (),
++            }
++        );
++        assert!(super::composite_template_derive::impl_composite_template(&input).is_err());
++    }
++
++    #[test]
++    fn valid_template_still_generates_code() {
++        let input = syn::parse_quote!(
++            #[template(string = "<interface/>")]
++            struct Valid {}
++        );
++        assert!(super::composite_template_derive::impl_composite_template(&input).is_ok());
++    }
++}
