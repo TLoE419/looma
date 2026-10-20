@@ -19,7 +19,6 @@
       ],
       "patch_sha256": "e43c4dd4fd325dc0d553b4235326d6eaf51d104678b9114637d31e3e436ccee6",
       "files": {
-        ".vscode/settings.json": "be539358240a6695b75d5b2053b5e4de849512c3c0561832e5770d223bb39cb0",
         "Cargo.toml": "b3bff1d207132678158edbb1233744c645e12da43212e787e08719a366ec3808",
         "Cargo.toml.orig": "1799e4c31de6d7d3432dfca396bf96baefbe3338f7b731a7564b93433cf9a1d9",
         "LICENSE-APACHE": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a",
