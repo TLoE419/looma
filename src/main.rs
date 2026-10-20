@@ -3,6 +3,12 @@
 use dioxus::prelude::*;
 
 mod codex;
+
+// Own per-plan generation progress and inspected outputs without changing the planning schema.
+mod generation;
+
+// Keep the planning contract separate from CLI calls and workspace interaction.
+mod plan;
 mod workspace_model;
 mod workspace_ui;
 

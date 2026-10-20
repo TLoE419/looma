@@ -2354,6 +2354,8 @@ dependencies = [
  "dioxus",
  "image",
  "rfd",
+ "serde",
+ "serde_json",
  "tempfile",
  "tokio",
 ]
